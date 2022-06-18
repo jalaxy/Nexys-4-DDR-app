@@ -1,75 +1,128 @@
 `include "top.vh"
-module fft(clk, rst, sig, addr, din, dout, wea, clk_mem);
-input clk;
-input rst;
-input sig;
-output [`logN*`M-1:0] addr;
-input [64*`M-1:0] din;
-output [64*`M-1:0] dout;
-output wea;
-output clk_mem;
+module fft(clk, rst, sig, we, rev, addr, din, dout);
+input clk, rst, sig;
+input we, rev;
+input [`logN-1:0] addr;
+input [`CW-1:0] din;
+output [`CW-1:0] dout;
 
-reg busy;
+reg busy, finish;
 wire start, clk_run;
-reg [0:0] stage;
+reg [`logS-1:0] stage;
+wire [`logN-1:0] addr_rev;
+wire [`logN-1:0] addr_phy;
 reg [`logN-1:0] rnd;
-reg [`N/`M-1:0] iter;
+reg [`logNpM-2:0] iter;
+reg [`logCyc-1:0] cycle;
 genvar igen;
-integer k;
+wire we_calc;
+reg [`logNpM-1:0] addra_calc[0:`M], addrb_calc[0:`M]; // address during FFT calculation (register)
+wire [`logM-1:0] grpa[0:`M], grpb[0:`M]; // memory unit number of a and b
+wire [`logNpM-1:0] idxa[0:`M], idxb[0:`M]; // index of a and b within a unit
+reg [`CW-1:0] dina_calc[0:`M], dinb_calc[0:`M]; // input data during FFT calculation (register)
+wire [`CW-1:0] douta_calc[0:`M], doutb_calc[0:`M]; // output data during FFT calculation
+reg [`CW-1:0] opa[0:`M], opb[0:`M]; // oprands a and b
+wire [`CW-1:0] opc[0:`M], opd[0:`M]; // operands c and d
+reg [`logM:0] k; // iterator
 
+bit_reverse inst_rev(addr, addr_rev);
 assign start = sig & ~busy;
 assign clk_run = clk & busy;
-for (igen = 0; igen < `M; igen = igen + 1) begin : op_units
-    reg [63:0] ar, ai, br, bi;
-    reg [`logN-1:0] omega; 
-    wire [63:0] cr, ci, dr, di, wr, wi;
-    wire [63:0] revin;
-    wire [63:0] revout;
-    fft_op_unit op(ar, ai, br, bi, cr, ci, dr, di, wr, wi);
-    bit_reverse(revin, revout);
-    brom_cos4096(.addra(omega), .clka(clk_run), .douta(wr));
-    brom_sin4096(.addra(omega), .clka(clk_run), .douta(wi));
+assign addr_phy = rev ? addr_rev : addr;
+assign we_calc = cycle == `logCyc'd2 | stage == `logCyc'd3;
+for (igen = 0; igen < `M; igen = igen + 1) begin : mem_units // RAM units
+    wire wea, web; // write enable signal of port A and B
+    wire [`logNpM-1:0] addra, addrb; // addresses within an RAM unit
+    wire [`CW-1:0] dina, dinb, douta, doutb; // data
+    bram_data inst_data_r(
+        .wea(wea), .addra(addra), .dina(`r(dina)), .douta(`r(douta)), .clka(clk),
+        .web(web), .addrb(addrb), .dinb(`r(dinb)), .doutb(`r(doutb)), .clkb(clk)); // real part bram
+    bram_data inst_data_i(
+        .wea(wea), .addra(addra), .dina(`i(dina)), .douta(`i(douta)), .clka(clk),
+        .web(web), .addrb(addrb), .dinb(`i(dinb)), .doutb(`i(doutb)), .clkb(clk)); // imaginary part bram
+    assign wea   = busy ? (stage == `logS'd1 ? we_calc : 1'd0) : (igen == addr_phy[`logN-1:`logNpM]) & we;
+    assign web   = busy ? (stage == `logS'd1 ? we_calc : 1'd0) : 1'd0;
+    assign addra = busy ? (stage == `logS'd1 ? addra_calc[igen] : `logNpM'dz) : addr_phy[`logNpM-1:0];
+    assign addrb = busy ? (stage == `logS'd1 ? addrb_calc[igen] : `logNpM'dz) : `logNpM'dz;
+    assign dina  = busy ? (stage == `logS'd1 ? dina_calc[igen] : `CW'dz) : din;
+    assign dinb  = busy ? (stage == `logS'd1 ? dinb_calc[igen] : `CW'dz) : `CW'dz;
+    assign dout  = igen == addr_phy[`logN-1:`logNpM] ? douta : `CW'dz;
+    assign douta_calc[igen] = douta;
+    assign doutb_calc[igen] = doutb;
+end
+for (igen = 0; igen < `M; igen = igen + 1) begin : op_units // Operator units
+    wire [`CW-1:0] w; // operand w
+    wire [`logN-2:0] omega; // angle index 0 ~ N - 1
+    wire [`logN-1:0] addra, addrb; // address of oprand a and b
+    wire [`logN-1:0] addr_op; // address of operation
+    fft_op_unit op(`r(opa[igen]), `i(opa[igen]), `r(opb[igen]), `i(opb[igen]),
+        `r(opc[igen]), `i(opc[igen]), `r(opd[igen]), `i(opd[igen]), `r(w), `i(w)); // operator unit
+    brom_cos4096 inst_cos(.addra(omega), .clka(clk_run), .douta(`r(w))); // cos storage
+    brom_sin4096 inst_sin(.addra(omega), .clka(clk_run), .douta(`i(w))); // sin storage
+    assign addr_op = rnd > `logNpM ?
+        {igen[`logM-1:0], igen[`logM-1:0] & (`logM'd1 << (rnd - 1 - `logNpM)) ? 1'd1 : 1'd0, iter} :
+        {igen[`logM-1:0], iter, 1'd0} & (~`logN'd0 << (rnd - 1)) | iter & ~(~`logN'd0 << (rnd - 1));
+    assign addra = addr_op & ~(`logN'd1 << (rnd - 1));
+    assign addrb = addr_op | (`logN'd1 << (rnd - 1));
+    assign grpa[igen] = addra[`logN-1:`logNpM];
+    assign grpb[igen] = addrb[`logN-1:`logNpM];
+    assign idxa[igen] = addra[`logNpM-1:0];
+    assign idxb[igen] = addrb[`logNpM-1:0];
+    assign omega = addra << (`logN - igen);
 end
 
 always @(posedge clk_run)
 begin
     case (stage)
-    0: begin
-        stage = 1;
+    `logS'd0: begin // preperation stage
+        rnd <= `logN'd0;
+        iter <= `logNpM'd0;
+        cycle <= 1'd0;
+        stage <= `logS'd1;
+        finish <= 1'd0;
     end
-    1: begin
-        rnd <= rnd + 1;
-        iter <= iter + 1;
-        for (k = 0; k < `M; k = k + 1) begin
-            op_units[k].ar <= 64'd0;
-            op_units[k].ai <= 64'd0;
-            op_units[k].br <= 64'd0;
-            op_units[k].bi <= 64'd0;
-            op_units[k].omega <= `logN'd0;
+    `logS'd1: begin // calculation stage
+        if (cycle == `logCyc'd0) begin // 0: calculation of addresses
+            for (k = 0; k < `M; k = k + 1) begin // k is operator unit number
+                addra_calc[grpa[k]] = idxa[k];
+                addra_calc[grpb[k]] = idxb[k];
+            end
+        end else if (cycle == `logCyc'd2) begin // 2: read oprands from memory (1 clock latency)
+            for (k = 0; k < `M; k = k + 1) begin
+                opa[k] = douta_calc[grpa[k]];
+                opb[k] = doutb_calc[grpb[k]];
+            end
+        end else if (cycle == `logCyc'd3) begin // 3: write result into buffer
+            for (k = 0; k < `M; k = k + 1) begin
+                dina_calc[grpa[k]] = opc[k];
+                dinb_calc[grpb[k]] = opd[k];
+            end
+        end else if (cycle == `logCyc'd5) begin // 5: write buffer into memory (1 clock latency) and reset
+            if (rnd == ~`logN'd0) begin
+                finish <= 1'd1;
+                stage <= `logS'd0;
+            end
+            rnd <= rnd + 1;
+            iter <= iter + 1;
+            cycle <= 1'd0;
         end
-        if (rnd == ~`logN'd0) begin
-            busy <= 0;
-            stage <= 0;
-        end
+        cycle <= cycle  + 1;
+    end
+    default: begin
+        stage <= `logS'd0;
     end
     endcase
 end
 
-always @(posedge busy)
-    stage <= 0;
-
-always @(posedge start)
-    busy <= 1;
-
-always @(posedge rst)
-    busy <= 0;
+always @(posedge start or posedge rst or posedge finish)
+    busy <= rst ? 1'd0 : (finish ? 1'd0 : 1'd1);
 endmodule
 
 module fft_op_unit(ar, ai, br, bi, cr, ci, dr, di, wr, wi);
-input [63:0] ar, ai, br, bi;
-output [63:0] cr, ci, dr, di;
-input [63:0] wr, wi;
-wire [63:0] tr, ti, t1, t2, t3, t4;
+input [`FW-1:0] ar, ai, br, bi;
+output [`FW-1:0] cr, ci, dr, di;
+input [`FW-1:0] wr, wi;
+wire [`FW-1:0] tr, ti, t1, t2, t3, t4;
 floating_point_multiplier mul1(
     .s_axis_a_tdata(br), .s_axis_a_tvalid(1'd1),
     .s_axis_b_tdata(wr), .s_axis_b_tvalid(1'd1),
