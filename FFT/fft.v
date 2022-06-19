@@ -7,11 +7,11 @@ input [`CW-1:0] din;
 output [`CW-1:0] dout;
 
 reg busy, finish;
-wire start, clk_run;
+wire clk_run;
 reg [`logS-1:0] stage;
 wire [`logN-1:0] addr_rev;
 wire [`logN-1:0] addr_phy;
-reg [`logN-1:0] rnd;
+reg [`logN-1:0] rnd; // even though rnd is in (0, logN] instead [0, N)
 reg [`logNpM-2:0] iter;
 reg [`logCyc-1:0] cycle;
 genvar igen;
@@ -26,20 +26,19 @@ wire [`CW-1:0] opc[0:`M], opd[0:`M]; // operands c and d
 reg [`logM:0] k; // iterator
 
 bit_reverse inst_rev(addr, addr_rev);
-assign start = sig & ~busy;
 assign clk_run = clk & busy;
 assign addr_phy = rev ? addr_rev : addr;
-assign we_calc = cycle == `logCyc'd2 | stage == `logCyc'd3;
+assign we_calc = cycle == `logCyc'd4 | cycle == `logCyc'd5;
 for (igen = 0; igen < `M; igen = igen + 1) begin : mem_units // RAM units
     wire wea, web; // write enable signal of port A and B
     wire [`logNpM-1:0] addra, addrb; // addresses within an RAM unit
     wire [`CW-1:0] dina, dinb, douta, doutb; // data
     bram_data inst_data_r(
-        .wea(wea), .addra(addra), .dina(`r(dina)), .douta(`r(douta)), .clka(clk),
-        .web(web), .addrb(addrb), .dinb(`r(dinb)), .doutb(`r(doutb)), .clkb(clk)); // real part bram
+        .wea(wea), .addra({`logNpM'd0, addra}), .dina(`r(dina)), .douta(`r(douta)), .clka(clk),
+        .web(web), .addrb({`logNpM'd0, addrb}), .dinb(`r(dinb)), .doutb(`r(doutb)), .clkb(clk)); // real part bram
     bram_data inst_data_i(
-        .wea(wea), .addra(addra), .dina(`i(dina)), .douta(`i(douta)), .clka(clk),
-        .web(web), .addrb(addrb), .dinb(`i(dinb)), .doutb(`i(doutb)), .clkb(clk)); // imaginary part bram
+        .wea(wea), .addra({`logNpM'd0, addra}), .dina(`i(dina)), .douta(`i(douta)), .clka(clk),
+        .web(web), .addrb({`logNpM'd0, addrb}), .dinb(`i(dinb)), .doutb(`i(doutb)), .clkb(clk)); // imaginary part bram
     assign wea   = busy ? (stage == `logS'd1 ? we_calc : 1'd0) : (igen == addr_phy[`logN-1:`logNpM]) & we;
     assign web   = busy ? (stage == `logS'd1 ? we_calc : 1'd0) : 1'd0;
     assign addra = busy ? (stage == `logS'd1 ? addra_calc[igen] : `logNpM'dz) : addr_phy[`logNpM-1:0];
@@ -52,13 +51,13 @@ for (igen = 0; igen < `M; igen = igen + 1) begin : mem_units // RAM units
 end
 for (igen = 0; igen < `M; igen = igen + 1) begin : op_units // Operator units
     wire [`CW-1:0] w; // operand w
-    wire [`logN-2:0] omega; // angle index 0 ~ N - 1
     wire [`logN-1:0] addra, addrb; // address of oprand a and b
+    wire [`logN-2:0] omega; // argument omega
     wire [`logN-1:0] addr_op; // address of operation
     fft_op_unit op(`r(opa[igen]), `i(opa[igen]), `r(opb[igen]), `i(opb[igen]),
         `r(opc[igen]), `i(opc[igen]), `r(opd[igen]), `i(opd[igen]), `r(w), `i(w)); // operator unit
-    brom_cos4096 inst_cos(.addra(omega), .clka(clk_run), .douta(`r(w))); // cos storage
-    brom_sin4096 inst_sin(.addra(omega), .clka(clk_run), .douta(`i(w))); // sin storage
+    brom_cos4096 inst_cos(.addra({`logNpM'd0, omega}), .clka(clk_run), .douta(`r(w))); // cos storage
+    brom_sin4096 inst_sin(.addra({`logNpM'd0, omega}), .clka(clk_run), .douta(`i(w))); // sin storage
     assign addr_op = rnd > `logNpM ?
         {igen[`logM-1:0], igen[`logM-1:0] & (`logM'd1 << (rnd - 1 - `logNpM)) ? 1'd1 : 1'd0, iter} :
         {igen[`logM-1:0], iter, 1'd0} & (~`logN'd0 << (rnd - 1)) | iter & ~(~`logN'd0 << (rnd - 1));
@@ -68,53 +67,91 @@ for (igen = 0; igen < `M; igen = igen + 1) begin : op_units // Operator units
     assign grpb[igen] = addrb[`logN-1:`logNpM];
     assign idxa[igen] = addra[`logNpM-1:0];
     assign idxb[igen] = addrb[`logNpM-1:0];
-    assign omega = addra << (`logN - igen);
+    assign omega = addra << (`logN - rnd);
 end
 
-always @(posedge clk_run)
+always @(posedge clk)
 begin
-    case (stage)
-    `logS'd0: begin // preperation stage
-        rnd <= `logN'd0;
-        iter <= `logNpM'd0;
-        cycle <= 1'd0;
-        stage <= `logS'd1;
+    if (rst | ~busy) begin
+        stage <= `logS'd0;
         finish <= 1'd0;
     end
-    `logS'd1: begin // calculation stage
-        if (cycle == `logCyc'd0) begin // 0: calculation of addresses
-            for (k = 0; k < `M; k = k + 1) begin // k is operator unit number
-                addra_calc[grpa[k]] = idxa[k];
-                addra_calc[grpb[k]] = idxb[k];
-            end
-        end else if (cycle == `logCyc'd2) begin // 2: read oprands from memory (1 clock latency)
-            for (k = 0; k < `M; k = k + 1) begin
-                opa[k] = douta_calc[grpa[k]];
-                opb[k] = doutb_calc[grpb[k]];
-            end
-        end else if (cycle == `logCyc'd3) begin // 3: write result into buffer
-            for (k = 0; k < `M; k = k + 1) begin
-                dina_calc[grpa[k]] = opc[k];
-                dinb_calc[grpb[k]] = opd[k];
-            end
-        end else if (cycle == `logCyc'd5) begin // 5: write buffer into memory (1 clock latency) and reset
-            if (rnd == ~`logN'd0) begin
-                finish <= 1'd1;
-                stage <= `logS'd0;
-            end
-            rnd <= rnd + 1;
-            iter <= iter + 1;
+    else case (stage)
+        `logS'd0: begin // preperation stage
+            rnd <= `logN'd1;
+            iter <= `logNpM'd0;
             cycle <= 1'd0;
+            stage <= `logS'd1;
+            finish <= 1'd0;
         end
-        cycle <= cycle  + 1;
-    end
-    default: begin
-        stage <= `logS'd0;
-    end
+        `logS'd1: begin // calculation stage
+            if (cycle == `logCyc'd0) begin // 0: calculation of addresses
+                for (k = 0; k < `M; k = k + 1) begin // k is operator unit number
+                    if (rnd > `logNpM) begin
+                        if (k[0]) begin
+                            addrb_calc[grpa[k]] <= idxa[k];
+                            addrb_calc[grpb[k]] <= idxb[k];
+                        end else begin
+                            addra_calc[grpa[k]] <= idxa[k];
+                            addra_calc[grpb[k]] <= idxb[k];
+                        end
+                    end else begin
+                        addra_calc[grpa[k]] <= idxa[k];
+                        addrb_calc[grpb[k]] <= idxb[k];
+                    end
+                end
+                cycle <= 1;
+            end else if (cycle == `logCyc'd2) begin // 2: read oprands from memory (1 clock latency)
+                for (k = 0; k < `M; k = k + 1) begin
+                    if (rnd > `logNpM) begin
+                        if (k[0]) begin
+                            opa[k] <= doutb_calc[grpa[k]];
+                            opb[k] <= doutb_calc[grpb[k]];
+                        end else begin
+                            opa[k] <= douta_calc[grpa[k]];
+                            opb[k] <= douta_calc[grpb[k]];
+                        end
+                    end else begin
+                        opa[k] <= douta_calc[grpa[k]];
+                        opb[k] <= doutb_calc[grpb[k]];
+                    end
+                end
+                cycle <= 3;
+            end else if (cycle == `logCyc'd3) begin // 3: write result into buffer
+                for (k = 0; k < `M; k = k + 1) begin
+                    if (rnd > `logNpM) begin
+                        if (k[0]) begin
+                            dinb_calc[grpa[k]] <= opc[k];
+                            dinb_calc[grpb[k]] <= opd[k];
+                        end else begin
+                            dina_calc[grpa[k]] <= opc[k];
+                            dina_calc[grpb[k]] <= opd[k];
+                        end
+                    end else begin
+                        dina_calc[grpa[k]] <= opc[k];
+                        dinb_calc[grpb[k]] <= opd[k];
+                    end
+                end
+                cycle <= 4;
+            end else if (cycle == `logCyc'd5) begin // 5: write buffer into memory (1 clock latency) and reset
+                if ({1'd1, iter} == ~`logNpM'd0) begin
+                    if (rnd == `logN) begin
+                        finish <= 1'd1;
+                        stage <= `logS'd0;
+                    end
+                    rnd <= rnd + 1;
+                end
+                iter <= iter + 1;
+                cycle <= 1'd0;
+            end else cycle <= cycle + 1;
+        end
+        default: begin
+            stage <= `logS'd0;
+        end
     endcase
 end
 
-always @(posedge start or posedge rst or posedge finish)
+always @(posedge sig or posedge rst or posedge finish)
     busy <= rst ? 1'd0 : (finish ? 1'd0 : 1'd1);
 endmodule
 

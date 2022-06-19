@@ -1,37 +1,75 @@
 `timescale 1ns/1ns
+`include "top.vh"
 module fft_tb();
 reg clk, rst, sig, we, rev;
 reg [31:0] addr;
 reg [127:0] din;
 wire [127:0] dout; 
 fft inst(clk, rst, sig, we, rev, addr, din, dout);
-wire [127:0] dina, douta, test;
-wire wea;
-assign wea = fft.mem_units[0].wea;
-assign dina = fft.mem_units[0].dina;
-assign douta = fft.mem_units[0].douta;
-assign test = fft.addr_phy;
+wire clk_run, busy;
+wire [16:0] rnd, iter, cycle;
+assign clk_run = inst.clk_run;
+assign busy = inst.busy;
+assign rnd = inst.rnd;
+assign iter = inst.iter;
+assign cycle = inst.cycle;
+
+//wire [127:0] opa0, opb0, w0, ome0, opc0, opd0;
+//wire [127:0] opa1, opb1, w1, ome1, opc1, opd1;
+//assign opa0 = fft.opa[0];
+//assign opb0 = fft.opb[0];
+//assign w0 = fft.op_units[0].w;
+//assign ome0 = fft.op_units[0].omega;
+//assign opc0 = fft.opc[0];
+//assign opd0 = fft.opd[0];
+//assign opa1 = fft.opa[1];
+//assign opb1 = fft.opb[1];
+//assign w1 = fft.op_units[1].w;
+//assign ome1 = fft.op_units[1].omega;
+//assign opc1 = fft.opc[1];
+//assign opd1 = fft.opd[1];
+
+//wire [4:0] addra_calc[0:1], addrb_calc[0:1];
+//assign addra_calc[0] = fft.addra_calc[0];
+//assign addra_calc[1] = fft.addra_calc[1];
+//assign addrb_calc[0] = fft.addrb_calc[0];
+//assign addrb_calc[1] = fft.addrb_calc[1];
+
+//wire [4:0] grpa[0:1], grpb[0:1];
+//wire [4:0] idxa[0:1], idxb[0:1];
+//assign grpa[0] = fft.grpa[0];
+//assign grpa[1] = fft.grpa[1];
+//assign grpb[0] = fft.grpb[0];
+//assign grpb[1] = fft.grpb[1];
+//assign idxa[0] = fft.idxa[0];
+//assign idxa[1] = fft.idxa[1];
+//assign idxb[0] = fft.idxb[0];
+//assign idxb[1] = fft.idxb[1];
+
+integer i;
+reg [127:0] res;
+
 initial begin
-    clk = 0; addr = 64'd0; rst = 0; #10; rst = 1; #5; rst = 0;
-    we = 1;
-    rev = 1;
-    #10;
-    for (addr = 0; addr < 1024; addr = addr + 1) begin
-        din = (addr << 65) + addr;
-        #20;
+    clk = 0; sig = 0; addr = 64'd0; rst = 0; #10; rst = 1; #5; rst = 0;
+    din = 0; we = 0; rev = 0;
+    for (addr = 0; addr < 8; addr = addr + 1) #20;
+    #2000;
+    #100;
+    sig = 1; #10; sig = 0;
+    for (i = 0; i < 1000; i = i + 1) begin
+        #10;
+        if (fft.rnd == 3) begin rst = 1; #50; rst = 0; end
     end
-    we = 0;
-    rev = 0;
-    #1000;
-    for (addr = 0; addr < 1024; addr = addr + 1) #20;
-    #20;
+    for (addr = 0; addr < 8; addr = addr + 1) begin
+        #20;
+        res[addr] = dout;
+        #10;
+    end
+    #200;
     $stop();
 end
 initial begin
-    while (1) begin
-        clk = ~clk;
-        #5;
-    end
+    while (1) begin clk = ~clk; #5; end
 end
 endmodule
 
@@ -40,33 +78,32 @@ reg [`logN-1:0] din;
 wire [`logN-1:0] dout;
 bit_reverse inst(din, dout);
 initial begin
-    din = `logN'd0;
-    #10;
-    for (din = 1; din != 0; din = din + 1)
-        #10;
-    end
+    din = `logN'd0; #10;
+    for (din = 1; din != 0; din = din + 1) #10;
+end
 endmodule
 
 module bram_dual_tb();
 reg clk, wea, web;
-reg [31:0] addra, addrb, dina, dinb;
-wire [31:0] douta, doutb;  
+reg [7:0] addra, addrb, dina, dinb;
+wire [7:0] douta, doutb;  
 bram_data inst_data(
         .wea(wea), .addra(addra), .dina(dina), .douta(douta), .clka(clk),
         .web(web), .addrb(addrb), .dinb(dinb), .doutb(doutb), .clkb(clk));
 initial begin
-    clk = 0;
-    wea = 1;
-    #10;
-    addra = 0;
-    dina = 100;
-    #10;
-    wea = 0;
+    clk = 0; wea = 1; web = 1; #10;
+    for (addra = 0; addra != 8'd127; addra = addra + 1) begin
+        addrb = 256 - addra; dina = addra; dinb = addrb; #20;
+    end
+    wea = 0; web = 0; #100;
+    for (addra = 0; addra != 8'd127; addra = addra + 1) begin
+        addrb = 256 - addra; #20;
+    end
+    $stop();
 end
 initial begin
     while (1) begin
-        clk = ~clk;
-        #10;
+        clk = ~clk; #5;
     end
 end
 endmodule
@@ -78,14 +115,14 @@ fft_op_unit op(ar, ai, br, bi, cr, ci, dr, di, wr, wi);
 
 integer fpi, fpo, n, i;
 initial begin
-    fpi = $fopen("C:\\Users\\JXY\\Desktop\\project\\input.txt", "r");
-    fpo = $fopen("C:\\Users\\JXY\\Desktop\\project\\output.txt", "w");
+    fpi = $fopen("/home/nya/input.txt", "r");
+    fpo = $fopen("/home/nya/output.txt", "w");
     i = $fscanf(fpi, "%d", n);
     $display("%d\n", n);
     for (i = 0; i < n; i = i + 1) begin
-        $fscanf(fpi, "%x%x%x%x%x%x", ar, ai, br, bi, wr, wi);
-        #10;
+        $fscanf(fpi, "%x%x%x%x%x%x", ar, ai, br, bi, wr, wi); #10;
         $fdisplay(fpo, "%x %x %x %x", cr, ci, dr, di);
     end
+    $stop();
 end
 endmodule
