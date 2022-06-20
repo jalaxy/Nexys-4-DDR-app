@@ -93,50 +93,26 @@ begin
                     if (grpb[k] == k)
                         addrb_calc[grpb[k]] <= idxb[k];
                     else addra_calc[grpb[k]] <= idxb[k];
-//                    if (rnd > `logNpM) begin
-//                        if (k[rnd - 1 - `logNpM]) begin
-//                            addrb_calc[grpa[k]] <= idxa[k];
-//                            addrb_calc[grpb[k]] <= idxb[k];
-//                        end else begin
-//                            addra_calc[grpa[k]] <= idxa[k];
-//                            addra_calc[grpb[k]] <= idxb[k];
-//                        end
-//                    end else begin
-//                        addra_calc[grpa[k]] <= idxa[k];
-//                        addrb_calc[grpb[k]] <= idxb[k];
-//                    end
                 end
                 cycle <= 1;
             end else if (cycle == `logCyc'd2) begin // 2: read oprands from memory (1 clock latency)
                 for (k = 0; k < `M; k = k + 1) begin
-                    if (rnd > `logNpM) begin
-                        if (k[rnd - 1 - `logNpM]) begin
-                            opa[k] <= doutb_calc[grpa[k]];
-                            opb[k] <= doutb_calc[grpb[k]];
-                        end else begin
-                            opa[k] <= douta_calc[grpa[k]];
-                            opb[k] <= douta_calc[grpb[k]];
-                        end
-                    end else begin
+                    if (grpa[k] == k)
                         opa[k] <= douta_calc[grpa[k]];
+                    else opa[k] <= doutb_calc[grpa[k]];
+                    if (grpb[k] == k)
                         opb[k] <= doutb_calc[grpb[k]];
-                    end
+                    else opb[k] <= douta_calc[grpb[k]];
                 end
                 cycle <= 3;
             end else if (cycle == `logCyc'd3) begin // 3: write result into buffer
                 for (k = 0; k < `M; k = k + 1) begin
-                    if (rnd > `logNpM) begin
-                        if (k[rnd - 1 - `logNpM]) begin
-                            dinb_calc[grpa[k]] <= opc[k];
-                            dinb_calc[grpb[k]] <= opd[k];
-                        end else begin
-                            dina_calc[grpa[k]] <= opc[k];
-                            dina_calc[grpb[k]] <= opd[k];
-                        end
-                    end else begin
+                    if (grpa[k] == k)
                         dina_calc[grpa[k]] <= opc[k];
+                    else dinb_calc[grpa[k]] <= opc[k];
+                    if (grpb[k] == k)
                         dinb_calc[grpb[k]] <= opd[k];
-                    end
+                    else dina_calc[grpb[k]] <= opd[k];
                 end
                 cycle <= 4;
             end else if (cycle == `logCyc'd5) begin // 5: write buffer into memory (1 clock latency) and reset
