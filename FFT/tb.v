@@ -29,11 +29,26 @@ assign cycle = inst.cycle;
 //assign opc1 = fft.opc[1];
 //assign opd1 = fft.opd[1];
 
-//wire [4:0] addra_calc[0:1], addrb_calc[0:1];
+//wire [4:0] addra_calc[0:3], addrb_calc[0:3];
 //assign addra_calc[0] = fft.addra_calc[0];
 //assign addra_calc[1] = fft.addra_calc[1];
+//assign addra_calc[2] = fft.addra_calc[2];
+//assign addra_calc[3] = fft.addra_calc[3];
 //assign addrb_calc[0] = fft.addrb_calc[0];
 //assign addrb_calc[1] = fft.addrb_calc[1];
+//assign addrb_calc[2] = fft.addrb_calc[3];
+//assign addrb_calc[3] = fft.addrb_calc[3];
+
+//wire [4:0] addra[0:3], addrb[0:3];
+//assign addra[0] = fft.op_units[0].addra;
+//assign addrb[0] = fft.op_units[0].addrb;
+//assign addra[1] = fft.op_units[1].addra;
+//assign addrb[1] = fft.op_units[1].addrb;
+//assign addra[2] = fft.op_units[2].addra;
+//assign addrb[2] = fft.op_units[2].addrb;
+//assign addra[3] = fft.op_units[3].addra;
+//assign addrb[3] = fft.op_units[3].addrb;
+
 
 //wire [4:0] grpa[0:1], grpb[0:1];
 //wire [4:0] idxa[0:1], idxb[0:1];
@@ -47,20 +62,20 @@ assign cycle = inst.cycle;
 //assign idxb[1] = fft.idxb[1];
 
 integer i;
-reg [127:0] res;
+reg [127:0] res [0:15];
 
 initial begin
     clk = 0; sig = 0; addr = 64'd0; rst = 0; #10; rst = 1; #5; rst = 0;
     din = 0; we = 0; rev = 0;
-    for (addr = 0; addr < 8; addr = addr + 1) #20;
+    for (addr = 0; addr < 16; addr = addr + 1) #20;
     #2000;
     #100;
     sig = 1; #10; sig = 0;
     for (i = 0; i < 1000; i = i + 1) begin
         #10;
-        if (fft.rnd == 3) begin rst = 1; #50; rst = 0; end
+//        if (fft.rnd == 4) begin rst = 1; #50; rst = 0; end
     end
-    for (addr = 0; addr < 8; addr = addr + 1) begin
+    for (addr = 0; addr < 16; addr = addr + 1) begin
         #20;
         res[addr] = dout;
         #10;
