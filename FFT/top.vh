@@ -1,11 +1,11 @@
 // logN = logM + logNpM
-`define logN 4 // logarithm of sample number
+`define logN 12 // logarithm of sample number
 `define logM 2 // logarithm of parallel groups number
-`define logNpM 2 // logarithm of sample number in a group
+`define logNpM 10 // logarithm of sample number in a group
 // N = M * NpM
-`define N 16 // sample number
+`define N 4096 // sample number
 `define M 4 // parallel groups number (M between 2 to N/4)
-`define NpM 4 // sample number in a group
+`define NpM 1024 // sample number in a group
 
 `define logS 1 // logarithm of stage number
 `define logCyc 3 // logarithm of cycles within one time of calculation

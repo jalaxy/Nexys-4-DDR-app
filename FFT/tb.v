@@ -61,25 +61,31 @@ assign cycle = inst.cycle;
 //assign idxb[0] = fft.idxb[0];
 //assign idxb[1] = fft.idxb[1];
 
-integer i;
-reg [127:0] res [0:15];
+integer i, fpi, fpo;
 
 initial begin
+    fpi = $fopen("test4096.txt", "r");
+    fpo = $fopen("output.txt", "w");
     clk = 0; sig = 0; addr = 64'd0; rst = 0; #10; rst = 1; #5; rst = 0;
-    din = 0; we = 0; rev = 0;
-    for (addr = 0; addr < 16; addr = addr + 1) #20;
+    din = 0; we = 1; rev = 1;
+    for (addr = 0; addr < 4096; addr = addr + 1) begin
+        $fscanf(fpi, "%x", din); #20;
+    end
+    we = 0; rev = 0;
+    for (addr = 0; addr < 4096; addr = addr + 1) #20;
     #2000;
     #100;
     sig = 1; #10; sig = 0;
-    for (i = 0; i < 1000; i = i + 1) begin
+    for (i = 0; i < 1000000; i = i + 1) begin
         #10;
 //        if (fft.rnd == 4) begin rst = 1; #50; rst = 0; end
     end
-    for (addr = 0; addr < 16; addr = addr + 1) begin
+    for (addr = 0; addr < 4096; addr = addr + 1) begin
         #20;
-        res[addr] = dout;
+        $fdisplay(fpo, "%f + %f i", $bitstoreal(`r(dout)), $bitstoreal(`i(dout)));
         #10;
     end
+    $fclose(fpo);
     #200;
     $stop();
 end
