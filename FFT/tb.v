@@ -82,7 +82,7 @@ initial begin
     end
     for (addr = 0; addr < 4096; addr = addr + 1) begin
         #20;
-        $fdisplay(fpo, "%f + %f i", $bitstoreal(`r(dout)), $bitstoreal(`i(dout)));
+        $fdisplay(fpo, "%h %h", `r(dout), `i(dout));
         #10;
     end
     $fclose(fpo);
